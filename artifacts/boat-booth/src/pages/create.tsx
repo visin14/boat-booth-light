@@ -309,15 +309,21 @@ export default function Create() {
                         </p>
                       </div>
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => generation.photoUrl && downloadFile(generation.photoUrl, "boat-booth-photo")}
-                      className="bb-press inline-flex items-center gap-2 rounded-full font-extrabold"
-                      style={{ padding: "16px 28px", background: "#FFFFFF", color: "#061A2E", fontSize: 17, border: "3px solid #061A2E", boxShadow: "5px 5px 0 #061A2E" }}
+                  ) : generation.uploadStatus === "uploading" ? (
+                    <div
+                      className="flex items-center gap-3 rounded-[28px] bg-white bb-mono"
+                      style={{ padding: 20, border: "3px solid #061A2E", fontSize: 14, color: "#3A5670" }}
                     >
-                      <Download className="w-5 h-5" /> download photo
-                    </button>
-                  )}
+                      <QrCode className="w-5 h-5" style={{ color: "#FF6B4A" }} /> preparing your QR code&hellip;
+                    </div>
+                  ) : null}
+                  <button
+                    onClick={() => generation.photoUrl && downloadFile(generation.photoUrl, "boat-booth-photo")}
+                    className="bb-press inline-flex items-center gap-2 rounded-full font-extrabold"
+                    style={{ padding: "16px 28px", background: "#FFFFFF", color: "#061A2E", fontSize: 17, border: "3px solid #061A2E", boxShadow: "5px 5px 0 #061A2E" }}
+                  >
+                    <Download className="w-5 h-5" /> download photo
+                  </button>
                   <button onClick={reset} className="bb-mono self-center" style={{ fontSize: 14, color: "#061A2E", background: "none", border: "none" }}>
                     i&apos;m done, next guest &#8594;
                   </button>
