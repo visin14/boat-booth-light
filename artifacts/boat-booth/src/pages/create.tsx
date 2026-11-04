@@ -357,8 +357,9 @@ function PhotoQrCode({ url }: { url: string }) {
     let cancelled = false;
     setQrDataUrl(null);
     QRCode.toDataURL(url, {
-      width: 220,
-      margin: 1,
+      width: 480,
+      margin: 4, // full quiet zone — phone cameras fail to lock on without it
+      errorCorrectionLevel: "L", // long Blob URLs: fewer, larger modules scan more reliably
       color: { dark: "#061A2E", light: "#ffffff" },
     })
       .then((dataUrl) => {
@@ -371,10 +372,10 @@ function PhotoQrCode({ url }: { url: string }) {
   }, [url]);
 
   if (!qrDataUrl) {
-    return <div className="w-[140px] h-[140px] rounded-2xl animate-pulse" style={{ background: "#F2FBFF", border: "2px solid #061A2E" }} />;
+    return <div className="w-[200px] h-[200px] rounded-2xl animate-pulse" style={{ background: "#F2FBFF", border: "2px solid #061A2E" }} />;
   }
 
-  return <img src={qrDataUrl} alt="Scan to download your photo" className="w-[140px] h-[140px] rounded-2xl" style={{ border: "2px solid #061A2E" }} />;
+  return <img src={qrDataUrl} alt="Scan to download your photo" className="w-[200px] h-[200px]" style={{ background: "#ffffff", imageRendering: "pixelated" }} />;
 }
 
 // Subcomponent for Webcam
