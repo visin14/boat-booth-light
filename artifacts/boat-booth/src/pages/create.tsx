@@ -316,6 +316,14 @@ export default function Create() {
                     >
                       <QrCode className="w-5 h-5" style={{ color: "#FF6B4A" }} /> preparing your QR code&hellip;
                     </div>
+                  ) : generation.uploadStatus === "failed" ? (
+                    <div
+                      className="flex items-center gap-3 rounded-[28px] bg-white bb-mono max-w-[320px]"
+                      style={{ padding: 20, border: "3px solid #061A2E", fontSize: 13, color: "#3A5670" }}
+                    >
+                      <QrCode className="w-5 h-5 shrink-0" style={{ color: "#FF6B4A" }} />
+                      QR code unavailable right now (needs an internet connection and the photo upload service). Use the download button instead.
+                    </div>
                   ) : null}
                   <button
                     onClick={() => generation.photoUrl && downloadFile(generation.photoUrl, "boat-booth-photo")}
