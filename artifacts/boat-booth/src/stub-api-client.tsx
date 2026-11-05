@@ -58,12 +58,6 @@ const SCENES: Scene[] = [
     description: "Take the wheel for a calm autumn cruise across the lake.",
   },
   {
-    id: "jet-skiing",
-    name: "Jet Skiing",
-    tagline: "Open throttle, open water",
-    description: "Carve up spray on a jet ski at full speed.",
-  },
-  {
     id: "trophy-catch",
     name: "Trophy Catch",
     tagline: "Hold up your trophy catch",

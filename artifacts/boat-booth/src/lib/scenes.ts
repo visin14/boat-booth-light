@@ -5,7 +5,6 @@ import pontoonImg from "@assets/pontoon_wi.jpg_1780096222900.jpeg";
 import wakeImg from "@assets/wakesurfing.jpg_1780096222900.jpeg";
 import bassImg from "@assets/bass_fishing.jpg_1780096222901.jpeg";
 import boatCruisingImg from "@assets/boat_cruising.png";
-import jetSkiingImg from "@assets/jet_skiing.png";
 import trophyCatchImg from "@assets/trophy_catch.png";
 
 export const SCENE_IMAGES: Record<string, string> = {
@@ -13,7 +12,6 @@ export const SCENE_IMAGES: Record<string, string> = {
   "wakesurfing": wakeImg,
   "bass-fishing": bassImg,
   "boat-cruising": boatCruisingImg,
-  "jet-skiing": jetSkiingImg,
   "trophy-catch": trophyCatchImg,
 };
 
@@ -37,7 +35,6 @@ export const SCENE_IMAGES: Record<string, string> = {
 export const SCENE_SUBJECT_SLOTS: Record<string, { left: number; top: number; right: number; bottom: number }> = {
   "bass-fishing": { left: 0.4785, top: 0.2165, right: 0.5918, bottom: 0.5957 },
   "boat-cruising": { left: 0.2288, top: 0.3113, right: 0.5212, bottom: 0.9975 },
-  "jet-skiing": { left: 0.3693, top: 0.098, right: 0.5539, bottom: 0.5049 },
   "trophy-catch": { left: 0.2533, top: 0.1854, right: 0.7239, bottom: 0.9341 },
   "wakesurfing": { left: 0.7021, top: 0.424, right: 0.8057, bottom: 0.8283 },
 };

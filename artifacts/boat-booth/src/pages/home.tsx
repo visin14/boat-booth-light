@@ -16,7 +16,7 @@ const STEPS = [
     bg: "#8EDCFF",
     rotate: "-1.5deg",
     title: "pick a scene",
-    description: "Pontoon, wakesurfing, jet skiing and more. Choose your boat day.",
+    description: "Pontoon, wakesurfing, bass fishing and more. Choose your boat day.",
   },
   {
     num: "02",
@@ -70,15 +70,6 @@ const EXPERIENCES = [
     tagBg: "#8EDCFF",
     shadow: "#FF7AD9",
     image: SCENE_IMAGES["boat-cruising"],
-  },
-  {
-    id: "jet-skiing",
-    name: "jet skiing",
-    tagline: "open throttle, open water.",
-    tag: "full throttle",
-    tagBg: "#FF6B4A",
-    shadow: "#3FC6FF",
-    image: SCENE_IMAGES["jet-skiing"],
   },
   {
     id: "trophy-catch",
@@ -413,7 +404,7 @@ export default function Home() {
             </span>
           </h2>
           <p className="bb-mono m-0 max-w-[300px]" style={{ fontSize: 14, lineHeight: 1.6, color: "#3A5670" }}>
-            6 scenes. zero sunburn. each one renders in seconds.
+            5 scenes. zero sunburn. each one renders in seconds.
           </p>
         </div>
         <div className="grid gap-7" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))" }}>

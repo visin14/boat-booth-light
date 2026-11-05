@@ -18,7 +18,6 @@ const SCENE_META: Record<string, { tag: string; tagBg: string; shadow: string }>
   "wakesurfing": { tag: "high energy", tagBg: "#FFD23F", shadow: "#3FC6FF" },
   "bass-fishing": { tag: "chill mode", tagBg: "#FF7AD9", shadow: "var(--bb-lime)" },
   "boat-cruising": { tag: "smooth sailing", tagBg: "#8EDCFF", shadow: "#FF7AD9" },
-  "jet-skiing": { tag: "full throttle", tagBg: "#FF6B4A", shadow: "#3FC6FF" },
   "trophy-catch": { tag: "the big one", tagBg: "var(--bb-lime)", shadow: "#8B5CFF" },
 };
 const FALLBACK_META = { tag: "pick me", tagBg: "#FFD23F", shadow: "#3FC6FF" };
