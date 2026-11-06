@@ -2,43 +2,70 @@
 // call of any kind. The booth site runs at venues with no internet
 // connection. This detects the guest's face (TensorFlow.js BlazeFace, model
 // weights bundled under public/models/blazeface so nothing is fetched from
-// a CDN), aligns it to the face of the person already in the chosen scene
-// photo using a 3-point affine warp (eyes + nose), and pastes it over
-// theirs — a face swap, not a full-body cutout. The rest of that person
-// (body, pose, clothing, the dog, the boat) stays exactly as shot.
+// a CDN) for alignment, segments their actual head/hair silhouette
+// (TensorFlow.js BodyPix, weights bundled under public/models/bodypix) for
+// the cutout shape itself — not a guessed oval — aligns it to the face of
+// the person already in the chosen scene photo with a 2-point similarity
+// transform, and pastes it over theirs. The rest of that person (body,
+// pose, clothing, the dog, the boat) stays exactly as shot.
 import * as tf from "@tensorflow/tfjs-core";
 import "@tensorflow/tfjs-backend-webgl";
 import "@tensorflow/tfjs-backend-cpu";
 import * as blazeface from "@tensorflow-models/blazeface";
+import * as bodyPix from "@tensorflow-models/body-pix";
 
-const MODEL_URL = `${import.meta.env.BASE_URL}models/blazeface/model.json`;
+const FACE_MODEL_URL = `${import.meta.env.BASE_URL}models/blazeface/model.json`;
+const SEGMENTER_MODEL_URL = `${import.meta.env.BASE_URL}models/bodypix/model.json`;
 
-let netPromise: Promise<blazeface.BlazeFaceModel> | null = null;
+let facePromise: Promise<blazeface.BlazeFaceModel> | null = null;
+let segmenterPromise: Promise<bodyPix.BodyPix> | null = null;
+
+async function ensureBackend(): Promise<void> {
+  try {
+    await tf.setBackend("webgl");
+  } catch {
+    await tf.setBackend("cpu");
+  }
+  await tf.ready();
+}
 
 /** Loads (once) and caches the BlazeFace detection model from the bundled local weights. */
 function loadFaceDetector(): Promise<blazeface.BlazeFaceModel> {
-  if (!netPromise) {
-    netPromise = (async () => {
-      try {
-        await tf.setBackend("webgl");
-      } catch {
-        await tf.setBackend("cpu");
-      }
-      await tf.ready();
+  if (!facePromise) {
+    facePromise = (async () => {
+      await ensureBackend();
       // Lower than the 0.75 default — a guest isn't always looking
       // dead-on at the booth camera (kids moving, a group photo, someone
       // mid-laugh), and a missed detection means a "please retake" prompt
       // rather than a safe fallback, so it's worth trading a bit of
       // false-positive risk for fewer false "no face found" rejections.
-      return blazeface.load({ modelUrl: MODEL_URL, maxFaces: 1, scoreThreshold: 0.5 });
+      return blazeface.load({ modelUrl: FACE_MODEL_URL, maxFaces: 1, scoreThreshold: 0.5 });
     })();
   }
-  return netPromise;
+  return facePromise;
 }
 
-/** Warms up the model in the background so the first real capture doesn't eat the load time. */
+/** Loads (once) and caches the BodyPix segmentation model from the bundled local weights. */
+function loadSegmenter(): Promise<bodyPix.BodyPix> {
+  if (!segmenterPromise) {
+    segmenterPromise = (async () => {
+      await ensureBackend();
+      return bodyPix.load({
+        architecture: "MobileNetV1",
+        outputStride: 16,
+        multiplier: 0.75,
+        quantBytes: 4,
+        modelUrl: SEGMENTER_MODEL_URL,
+      });
+    })();
+  }
+  return segmenterPromise;
+}
+
+/** Warms up both models in the background so the first real capture doesn't eat the load time. */
 export function preloadSegmenter(): void {
   void loadFaceDetector();
+  void loadSegmenter();
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -149,49 +176,82 @@ function solveSimilarity(
 }
 
 /**
- * Builds a transparent-outside-the-face cutout of the guest's photo: the
- * original pixels inside a soft-edged oval around their detected face,
- * nothing outside it. The oval is sized relative to the eye/nose geometry
- * (not just BlazeFace's tight face box) so it comfortably covers forehead,
- * chin and ears once pasted over someone else's face.
+ * Builds a transparent-outside-the-head cutout of the guest's photo: the
+ * original pixels wherever BodyPix calls them "person" *and* that pixel
+ * falls inside a generous region of interest around the detected face —
+ * nothing outside either. Using real segmentation instead of a guessed
+ * oval means the cutout follows the guest's actual hairline, ears and jaw
+ * rather than approximating them with an ellipse, which is what caused the
+ * visible halo/gap artifacts in earlier versions of this pipeline: no
+ * matter how an oval's size and feather were tuned, it either bled into
+ * the guest's own background or left a gap showing it, because it simply
+ * didn't match their head's real shape.
  */
-function cutoutFace(guestCanvas: HTMLCanvasElement, face: DetectedFace): HTMLCanvasElement {
+async function cutoutFace(guestCanvas: HTMLCanvasElement, face: DetectedFace): Promise<HTMLCanvasElement> {
+  const net = await loadSegmenter();
+
   const [bx0, by0] = face.topLeft;
   const [bx1, by1] = face.bottomRight;
   const boxW = bx1 - bx0;
   const boxH = by1 - by0;
   const centerX = (bx0 + bx1) / 2;
-  // BlazeFace's box is tight around eyes/nose/mouth — bias the oval's
-  // center up and extend it to reach the chin below and the
-  // forehead/hair above. Sized generously enough to reliably clear the
-  // hairline even on a guest with more hair volume — too tight and a gap
-  // opens up at the top where *their own* background shows through inside
-  // the oval instead (a differently-colored patch, just as visible as the
-  // halo it was meant to avoid). The soft, wide feather below is what
-  // actually keeps a bit of background-color leak at the true edge from
-  // reading as a hard ring, not a tight radius.
   const centerY = by0 + boxH * 0.4;
-  const radiusX = boxW * 0.7;
-  const radiusY = boxH * 0.95;
+
+  // Generous region of interest around the head — wide/tall enough to
+  // reliably include hair and ears (and a little neck below the chin),
+  // but not reaching down into the rest of the body, so a raised hand or
+  // the far shoulder elsewhere in frame can't get pulled in too.
+  const roiX0 = Math.max(0, Math.floor(centerX - boxW * 1.3));
+  const roiX1 = Math.min(guestCanvas.width, Math.ceil(centerX + boxW * 1.3));
+  const roiY0 = Math.max(0, Math.floor(by0 - boxH * 0.9));
+  const roiY1 = Math.min(guestCanvas.height, Math.ceil(by0 + boxH * 1.7));
+
+  // The WebGL backend is occasionally flaky across repeated inferences in
+  // one long-lived session (see the retry note on detectFace above) —
+  // retry once if the ROI comes back suspiciously empty of "person"
+  // before concluding the photo itself is the problem.
+  const SEGMENT_ATTEMPTS = 2;
+  let segmentation: Awaited<ReturnType<typeof net.segmentPerson>> | null = null;
+  for (let attempt = 1; attempt <= SEGMENT_ATTEMPTS; attempt++) {
+    const seg = await net.segmentPerson(guestCanvas, { internalResolution: "full", segmentationThreshold: 0.6 });
+    let personPixels = 0;
+    let totalPixels = 0;
+    for (let y = roiY0; y < roiY1; y++) {
+      for (let x = roiX0; x < roiX1; x++) {
+        totalPixels++;
+        if (seg.data[y * seg.width + x] === 1) personPixels++;
+      }
+    }
+    if (personPixels / Math.max(1, totalPixels) >= 0.08 || attempt === SEGMENT_ATTEMPTS) {
+      segmentation = seg;
+      break;
+    }
+  }
+  if (!segmentation) throw new Error("Couldn't find a face in that photo — make sure your whole face is in frame and well lit.");
 
   const maskCanvas = document.createElement("canvas");
   maskCanvas.width = guestCanvas.width;
   maskCanvas.height = guestCanvas.height;
   const maskCtx = maskCanvas.getContext("2d");
   if (!maskCtx) throw new Error("Canvas 2D context unavailable");
-  maskCtx.fillStyle = "#fff";
-  maskCtx.beginPath();
-  maskCtx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
-  maskCtx.fill();
+  const maskImageData = maskCtx.createImageData(guestCanvas.width, guestCanvas.height);
+  const segW = segmentation.width;
+  for (let y = roiY0; y < roiY1; y++) {
+    for (let x = roiX0; x < roiX1; x++) {
+      if (segmentation.data[y * segW + x] !== 1) continue;
+      const idx = (y * guestCanvas.width + x) * 4;
+      maskImageData.data[idx] = 255;
+      maskImageData.data[idx + 1] = 255;
+      maskImageData.data[idx + 2] = 255;
+      maskImageData.data[idx + 3] = 255;
+    }
+  }
+  maskCtx.putImageData(maskImageData, 0, 0);
 
-  // Feather the oval edge so the paste doesn't look like a sticker — blur
-  // radius scales with the face size so it reads the same whether the
-  // capture was low- or high-resolution. Wide on purpose: a simple oval
-  // can't match an actual head's silhouette exactly, so *some* of the
-  // guest's own background inevitably ends up right at the true edge —
-  // a wide, soft gradient there fades that out gradually instead of
-  // showing it as a sharp, differently-colored ring.
-  const featherPx = Math.max(3, Math.round(Math.min(radiusX, radiusY) * 0.22));
+  // Light feather only — the mask already follows the real silhouette, so
+  // this is just anti-aliasing the per-pixel segmentation edge, not
+  // papering over a shape mismatch the way the old oval's wide blur had to.
+  const featherPx = Math.max(1, Math.round(Math.min(boxW, boxH) * 0.04));
   const blurredMaskCanvas = document.createElement("canvas");
   blurredMaskCanvas.width = maskCanvas.width;
   blurredMaskCanvas.height = maskCanvas.height;
@@ -258,7 +318,7 @@ export async function generateOfflinePhoto(
   guestCtx.drawImage(guestImg, 0, 0);
 
   const guestFace = await detectFace(guestCanvas);
-  const faceCutout = cutoutFace(guestCanvas, guestFace);
+  const faceCutout = await cutoutFace(guestCanvas, guestFace);
 
   const sceneW = sceneImg.naturalWidth;
   const sceneH = sceneImg.naturalHeight;

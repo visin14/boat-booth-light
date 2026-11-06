@@ -182,6 +182,9 @@ importers:
       '@tensorflow-models/blazeface':
         specifier: ^0.1.0
         version: 0.1.0(@tensorflow/tfjs-converter@4.22.0(@tensorflow/tfjs-core@4.22.0))(@tensorflow/tfjs-core@4.22.0)
+      '@tensorflow-models/body-pix':
+        specifier: ^2.2.1
+        version: 2.2.1(@tensorflow/tfjs-backend-webgl@4.22.0(@tensorflow/tfjs-core@4.22.0))(@tensorflow/tfjs-converter@4.22.0(@tensorflow/tfjs-core@4.22.0))(@tensorflow/tfjs-core@4.22.0)
       '@tensorflow/tfjs-backend-cpu':
         specifier: ^4.22.0
         version: 4.22.0(@tensorflow/tfjs-core@4.22.0)
@@ -1447,6 +1450,13 @@ packages:
   '@tensorflow-models/blazeface@0.1.0':
     resolution: {integrity: sha512-Qc5Wii8/OE5beC7XfehkhF9SEFLaPbVKnxxalV0T9JXsUynXqvLommc9Eko7b8zXKy4SJ1BtVlcX2cmCzQrn9A==}
     peerDependencies:
+      '@tensorflow/tfjs-converter': ^4.10.0
+      '@tensorflow/tfjs-core': ^4.10.0
+
+  '@tensorflow-models/body-pix@2.2.1':
+    resolution: {integrity: sha512-JeZHcpVMR0mW2znmF0FpZ0f7zpSY7c6+A7FBOmcIyZupTkXmG3MwGGqFPsVjRBwfqaKa4qYCJd7Svqo6rMzJYw==}
+    peerDependencies:
+      '@tensorflow/tfjs-backend-webgl': ^4.10.0
       '@tensorflow/tfjs-converter': ^4.10.0
       '@tensorflow/tfjs-core': ^4.10.0
 
@@ -3359,6 +3369,12 @@ snapshots:
 
   '@tensorflow-models/blazeface@0.1.0(@tensorflow/tfjs-converter@4.22.0(@tensorflow/tfjs-core@4.22.0))(@tensorflow/tfjs-core@4.22.0)':
     dependencies:
+      '@tensorflow/tfjs-converter': 4.22.0(@tensorflow/tfjs-core@4.22.0)
+      '@tensorflow/tfjs-core': 4.22.0
+
+  '@tensorflow-models/body-pix@2.2.1(@tensorflow/tfjs-backend-webgl@4.22.0(@tensorflow/tfjs-core@4.22.0))(@tensorflow/tfjs-converter@4.22.0(@tensorflow/tfjs-core@4.22.0))(@tensorflow/tfjs-core@4.22.0)':
+    dependencies:
+      '@tensorflow/tfjs-backend-webgl': 4.22.0(@tensorflow/tfjs-core@4.22.0)
       '@tensorflow/tfjs-converter': 4.22.0(@tensorflow/tfjs-core@4.22.0)
       '@tensorflow/tfjs-core': 4.22.0
 
