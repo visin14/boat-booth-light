@@ -5,12 +5,16 @@ get placed into it. Built with React, Vite, and Tailwind CSS v4.
 
 Generation runs **entirely offline, client-side** — the booth runs at venues
 with no internet connection. `artifacts/boat-booth/src/lib/offline-compositor.ts`
-segments the guest out of their photo with TensorFlow.js BodyPix (model
-weights bundled locally under `public/models/bodypix/`, not fetched from a
-CDN) and composites them onto the chosen scene's background image with a
-`<canvas>`. No network request is made anywhere in that pipeline. (An earlier
-version called xAI's Grok Imagine API for a photorealistic AI blend — that
-needed internet and has been replaced by this cutout-and-overlay approach.)
+detects the guest's face with TensorFlow.js BlazeFace (model weights bundled
+locally under `public/models/blazeface/`, not fetched from a CDN), aligns it
+to the face of the person already in the chosen scene photo with a 2-point
+(eyes) similarity transform, and pastes it over theirs with a `<canvas>` — a
+face swap, not a full-body cutout, so the rest of that person (body, pose,
+clothing, a dog, a boat) stays exactly as shot. No network request is made
+anywhere in that pipeline. (Two earlier versions existed: calling xAI's Grok
+Imagine API for a photorealistic AI blend, which needed internet; then a
+full-body cutout-and-overlay using TensorFlow.js BodyPix, offline but
+replacing the whole person instead of just their face.)
 
 ## Project structure
 
@@ -52,12 +56,18 @@ only the local network.
 
 ## Notes
 
-- `attached_assets/` holds the three scene photos (pontoon sunset,
-  wakesurfing, bass fishing) referenced via the `@assets` Vite alias.
-- `public/models/bodypix/` holds the BodyPix segmentation model weights
-  (~5.2MB, float weights — chosen over the smaller quantized model for
-  cleaner mask edges), bundled into the build so the first photo doesn't fetch
-  anything externally.
+- `attached_assets/` holds the five scene photos (bass fishing, boat
+  cruising, trophy catch, lake camp, dock unwind) referenced via the
+  `@assets` Vite alias.
+- `public/models/blazeface/` holds the BlazeFace detection model weights
+  (~460KB), bundled into the build so the first photo doesn't fetch anything
+  externally.
+- `SCENE_FACE_LANDMARKS` in `lib/scenes.ts` is where each scene's own
+  person's eyes and nose already are, measured once (not at runtime). Most
+  came from running BlazeFace against the background photo itself; two
+  (`bass-fishing`, `boat-cruising`) are plotted by hand because BlazeFace
+  couldn't find a face there at all (too small in frame, and sunglasses,
+  respectively) even at a near-zero confidence threshold.
 - The result screen's "scan to download" QR code only appears when a
   generation has a `downloadUrl` (i.e. a real backend hosting the photo at a
   short URL); since this offline build has none, guests instead get a

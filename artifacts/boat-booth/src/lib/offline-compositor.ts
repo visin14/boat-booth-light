@@ -1,23 +1,22 @@
-// Fully offline "put the guest on the water" pipeline — no network call of
-// any kind. The booth site runs at venues with no internet connection, so
-// the earlier xAI Grok Imagine integration (api/generate-photo.js) can't be
-// reached there; this replaces it with client-side person segmentation
-// (TensorFlow.js BodyPix, model weights bundled under public/models/bodypix
-// so nothing is fetched from a CDN) plus a canvas composite onto the chosen
-// scene's background photo. It's a straight cutout-and-overlay, not a
-// photorealistic AI blend — that trade-off is the point: it works with the
-// power cord and nothing else.
+// Fully offline "put the guest's face on the water" pipeline — no network
+// call of any kind. The booth site runs at venues with no internet
+// connection. This detects the guest's face (TensorFlow.js BlazeFace, model
+// weights bundled under public/models/blazeface so nothing is fetched from
+// a CDN), aligns it to the face of the person already in the chosen scene
+// photo using a 3-point affine warp (eyes + nose), and pastes it over
+// theirs — a face swap, not a full-body cutout. The rest of that person
+// (body, pose, clothing, the dog, the boat) stays exactly as shot.
 import * as tf from "@tensorflow/tfjs-core";
 import "@tensorflow/tfjs-backend-webgl";
 import "@tensorflow/tfjs-backend-cpu";
-import * as bodyPix from "@tensorflow-models/body-pix";
+import * as blazeface from "@tensorflow-models/blazeface";
 
-const MODEL_URL = `${import.meta.env.BASE_URL}models/bodypix/model.json`;
+const MODEL_URL = `${import.meta.env.BASE_URL}models/blazeface/model.json`;
 
-let netPromise: Promise<bodyPix.BodyPix> | null = null;
+let netPromise: Promise<blazeface.BlazeFaceModel> | null = null;
 
-/** Loads (once) and caches the BodyPix segmentation model from the bundled local weights. */
-function loadSegmenter(): Promise<bodyPix.BodyPix> {
+/** Loads (once) and caches the BlazeFace detection model from the bundled local weights. */
+function loadFaceDetector(): Promise<blazeface.BlazeFaceModel> {
   if (!netPromise) {
     netPromise = (async () => {
       try {
@@ -26,16 +25,12 @@ function loadSegmenter(): Promise<bodyPix.BodyPix> {
         await tf.setBackend("cpu");
       }
       await tf.ready();
-      return bodyPix.load({
-        architecture: "MobileNetV1",
-        outputStride: 16,
-        multiplier: 0.75,
-        // Float weights (not quantized) — noticeably cleaner mask edges than
-        // the smaller quant2 model; worth the extra ~2.6MB since this is a
-        // one-time local load, not a network fetch.
-        quantBytes: 4,
-        modelUrl: MODEL_URL,
-      });
+      // Lower than the 0.75 default — a guest isn't always looking
+      // dead-on at the booth camera (kids moving, a group photo, someone
+      // mid-laugh), and a missed detection means a "please retake" prompt
+      // rather than a safe fallback, so it's worth trading a bit of
+      // false-positive risk for fewer false "no face found" rejections.
+      return blazeface.load({ modelUrl: MODEL_URL, maxFaces: 1, scoreThreshold: 0.5 });
     })();
   }
   return netPromise;
@@ -43,7 +38,7 @@ function loadSegmenter(): Promise<bodyPix.BodyPix> {
 
 /** Warms up the model in the background so the first real capture doesn't eat the load time. */
 export function preloadSegmenter(): void {
-  void loadSegmenter();
+  void loadFaceDetector();
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -56,119 +51,137 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+type Point = [number, number];
+
+/** The three landmarks (in absolute pixel coordinates) a face alignment is built from. */
+interface FacePoints {
+  rightEye: Point;
+  leftEye: Point;
+  nose: Point;
+}
+
+/** A detected face's alignment points plus its overall box, in the pixel space of the image it was detected on. */
+interface DetectedFace extends FacePoints {
+  topLeft: Point;
+  bottomRight: Point;
+}
+
 /**
- * Segments the person out of `photoDataUrl` and returns a canvas containing
- * just them, transparent elsewhere, with softened (blurred-mask) edges
- * instead of a hard, jagged cutout line.
+ * Runs BlazeFace on `canvas` and returns the most confident face's key
+ * points. The underlying WebGL backend is occasionally flaky across
+ * repeated inferences on different-sized inputs in one long-lived session
+ * — a kiosk processing many guests back to back is exactly that pattern —
+ * so this retries once before concluding the photo itself has no
+ * detectable face.
  */
-async function cutoutPerson(photoDataUrl: string): Promise<HTMLCanvasElement> {
-  const net = await loadSegmenter();
-  const img = await loadImage(photoDataUrl);
+async function detectFace(canvas: HTMLCanvasElement): Promise<DetectedFace> {
+  const net = await loadFaceDetector();
+  const ATTEMPTS = 2;
 
-  const photoCanvas = document.createElement("canvas");
-  photoCanvas.width = img.naturalWidth;
-  photoCanvas.height = img.naturalHeight;
-  const photoCtx = photoCanvas.getContext("2d");
-  if (!photoCtx) throw new Error("Canvas 2D context unavailable");
-  photoCtx.drawImage(img, 0, 0);
-
-  // The underlying WebGL backend is occasionally flaky across repeated
-  // inferences on different-sized inputs in one long-lived session — a
-  // kiosk processing many guests back to back is exactly that pattern —
-  // and can return a near-empty mask on an otherwise perfectly good photo.
-  // Retry once with a fresh inference before concluding the photo itself
-  // is the problem, so a guest doesn't get an unnecessary "retake" prompt
-  // over a transient hiccup.
-  const SEGMENT_ATTEMPTS = 2;
-  let minX = 0;
-  let minY = 0;
-  let maxX = -1;
-  let maxY = -1;
-  let personPixels = 0;
-  let segmentation: Awaited<ReturnType<typeof net.segmentPerson>> | null = null;
-
-  for (let attempt = 1; attempt <= SEGMENT_ATTEMPTS; attempt++) {
-    segmentation = await net.segmentPerson(photoCanvas, {
-      // "full" gives a noticeably less blocky mask boundary than the default
-      // "medium" — this runs once per photo, not per frame, so the extra cost
-      // is a worthwhile trade for not looking pixelated once cropped and
-      // scaled up to fill the frame.
-      internalResolution: "full",
-      // Slightly below the 0.7 default so more of the body (not just skin
-      // tones) counts as "person" — clothing in low light was getting missed
-      // and the bounding box below ended up head-only.
-      segmentationThreshold: 0.6,
-    });
-
-    // Bounding box of the segmented person, in segmentation-mask pixel space
-    // (same resolution as the source photo). Needed below to crop the cutout
-    // down to just them — without this, compositing scales the *whole*
-    // mostly-transparent source frame to fill the output, leaving the person
-    // tiny and wherever they happened to stand in the original shot.
-    minX = segmentation.width;
-    minY = segmentation.height;
-    maxX = -1;
-    maxY = -1;
-    personPixels = 0;
-    for (let y = 0; y < segmentation.height; y++) {
-      for (let x = 0; x < segmentation.width; x++) {
-        if (segmentation.data[y * segmentation.width + x] !== 1) continue;
-        personPixels++;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    // The 4th param ("annotateBoxes") must be true or BlazeFace omits
+    // landmarks/probability from its predictions entirely.
+    const predictions = await net.estimateFaces(canvas, false, false, true);
+    if (predictions.length > 0) {
+      const face = predictions[0];
+      const landmarks = face.landmarks as unknown as Point[];
+      // BlazeFace's documented keypoint order: rightEye, leftEye, nose, mouth, rightEar, leftEar.
+      return {
+        rightEye: landmarks[0],
+        leftEye: landmarks[1],
+        nose: landmarks[2],
+        topLeft: face.topLeft as unknown as Point,
+        bottomRight: face.bottomRight as unknown as Point,
+      };
     }
-
-    const bboxHeightFrac = maxY >= minY ? (maxY - minY) / segmentation.height : 0;
-    const personAreaFrac = personPixels / (segmentation.width * segmentation.height);
-    const looksValid = maxX >= minX && maxY >= minY && bboxHeightFrac >= 0.25 && personAreaFrac >= 0.03;
-    if (looksValid || attempt === SEGMENT_ATTEMPTS) break;
+    if (attempt === ATTEMPTS) {
+      throw new Error("Couldn't find a face in that photo — make sure your whole face is in frame and well lit.");
+    }
   }
-  if (!segmentation) throw new Error("Segmentation model unavailable.");
+  throw new Error("Couldn't find a face in that photo — make sure your whole face is in frame and well lit.");
+}
 
-  // A guest standing in front of the booth camera should dominate the
-  // frame — a sliver of "person" pixels (a stray hand, a reflection, model
-  // noise, or a leftover flaky inference even after the retry above) crops
-  // down to something unrecognizable once blown up to fill the result. Fail
-  // clearly here instead of silently compositing that, so the guest sees
-  // the existing "something went wrong, retake" screen rather than a
-  // broken-looking photo.
-  const bboxHeightFrac = maxY >= minY ? (maxY - minY) / segmentation.height : 0;
-  const personAreaFrac = personPixels / (segmentation.width * segmentation.height);
-  if (maxX < minX || maxY < minY || bboxHeightFrac < 0.25 || personAreaFrac < 0.03) {
-    throw new Error("Couldn't get a clear view of you in that photo — try stepping back so your head and shoulders are fully in frame.");
+/**
+ * Solves for the 2x3 affine matrix [a, b, c, d, e, f] (Canvas
+ * `setTransform` order) for a *similarity* transform (uniform scale +
+ * rotation + translation, no shear or independent per-axis stretch) that
+ * maps `srcEyeLine` onto `dstEyeLine`. Deliberately not a general 3-point
+ * affine: that's exact at 3 control points but can extrapolate into wild
+ * shear/scale everywhere else (forehead, chin) when those points are
+ * noisy — a real problem for scenes where the person's face was only
+ * detected at low confidence. A 2-point eye-line similarity transform is
+ * the standard, more robust technique for face alignment — scale comes
+ * from the (well-conditioned) eye-to-eye distance ratio, rotation from the
+ * eye-line angle, and nothing else can distort independently.
+ */
+function solveSimilarity(
+  srcEyeLine: [Point, Point],
+  dstEyeLine: [Point, Point],
+): [number, number, number, number, number, number] {
+  const [srcLeft, srcRight] = srcEyeLine;
+  const [dstLeft, dstRight] = dstEyeLine;
+
+  const srcDx = srcRight[0] - srcLeft[0];
+  const srcDy = srcRight[1] - srcLeft[1];
+  const srcDist = Math.hypot(srcDx, srcDy);
+  const dstDx = dstRight[0] - dstLeft[0];
+  const dstDy = dstRight[1] - dstLeft[1];
+  const dstDist = Math.hypot(dstDx, dstDy);
+  if (srcDist < 1e-3 || dstDist < 1e-3) {
+    throw new Error("Face alignment points are degenerate (eyes coincide).");
   }
 
-  // Opaque-white-on-transparent mask, one pixel per source pixel.
+  const scale = dstDist / srcDist;
+  const rotation = Math.atan2(dstDy, dstDx) - Math.atan2(srcDy, srcDx);
+  const cos = Math.cos(rotation) * scale;
+  const sin = Math.sin(rotation) * scale;
+
+  // Rotation-scale 2x2 [[cos,-sin],[sin,cos]], then solve the translation
+  // that sends srcLeft exactly onto dstLeft.
+  const a = cos;
+  const b = sin;
+  const c = -sin;
+  const d = cos;
+  const e = dstLeft[0] - (a * srcLeft[0] + c * srcLeft[1]);
+  const f = dstLeft[1] - (b * srcLeft[0] + d * srcLeft[1]);
+
+  return [a, b, c, d, e, f];
+}
+
+/**
+ * Builds a transparent-outside-the-face cutout of the guest's photo: the
+ * original pixels inside a soft-edged oval around their detected face,
+ * nothing outside it. The oval is sized relative to the eye/nose geometry
+ * (not just BlazeFace's tight face box) so it comfortably covers forehead,
+ * chin and ears once pasted over someone else's face.
+ */
+function cutoutFace(guestCanvas: HTMLCanvasElement, face: DetectedFace): HTMLCanvasElement {
+  const [bx0, by0] = face.topLeft;
+  const [bx1, by1] = face.bottomRight;
+  const boxW = bx1 - bx0;
+  const boxH = by1 - by0;
+  const centerX = (bx0 + bx1) / 2;
+  // BlazeFace's box is tight around eyes/nose/mouth — bias the oval's
+  // center up and extend it further below to reach the chin, and well
+  // above to reach the forehead/hairline.
+  const centerY = by0 + boxH * 0.45;
+  const radiusX = boxW * 0.75;
+  const radiusY = boxH * 1.0;
+
   const maskCanvas = document.createElement("canvas");
-  maskCanvas.width = segmentation.width;
-  maskCanvas.height = segmentation.height;
+  maskCanvas.width = guestCanvas.width;
+  maskCanvas.height = guestCanvas.height;
   const maskCtx = maskCanvas.getContext("2d");
   if (!maskCtx) throw new Error("Canvas 2D context unavailable");
-  const maskImageData = maskCtx.createImageData(segmentation.width, segmentation.height);
-  for (let i = 0; i < segmentation.data.length; i++) {
-    const isPerson = segmentation.data[i] === 1;
-    const offset = i * 4;
-    maskImageData.data[offset] = 255;
-    maskImageData.data[offset + 1] = 255;
-    maskImageData.data[offset + 2] = 255;
-    maskImageData.data[offset + 3] = isPerson ? 255 : 0;
-  }
-  maskCtx.putImageData(maskImageData, 0, 0);
+  maskCtx.fillStyle = "#fff";
+  maskCtx.beginPath();
+  maskCtx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+  maskCtx.fill();
 
-  // Blur radius as a fraction of the *person's* bounding box (not the full
-  // photo) — generateOfflinePhoto later scales the crop to a fixed output
-  // height regardless of source resolution, so tying the feather to a
-  // fraction of the crop means it ends up roughly the same apparent size in
-  // the final image whether the capture was 480p or 1080p, instead of
-  // turning into a huge blur blob when a small capture gets scaled way up.
-  const bboxSize = Math.max(maxX - minX, maxY - minY, 1);
-  const featherPx = Math.min(6, Math.max(1, Math.round(bboxSize * 0.006)));
-
-  // Blur the mask (not the photo) to turn the hard per-pixel edge into a
-  // soft feather, then use it as an alpha stencil over the original photo.
+  // Feather the oval edge so the paste doesn't look like a sticker — blur
+  // radius scales with the face size so it reads the same whether the
+  // capture was low- or high-resolution.
+  const featherPx = Math.max(2, Math.round(Math.min(radiusX, radiusY) * 0.12));
   const blurredMaskCanvas = document.createElement("canvas");
   blurredMaskCanvas.width = maskCanvas.width;
   blurredMaskCanvas.height = maskCanvas.height;
@@ -177,145 +190,102 @@ async function cutoutPerson(photoDataUrl: string): Promise<HTMLCanvasElement> {
   blurredMaskCtx.filter = `blur(${featherPx}px)`;
   blurredMaskCtx.drawImage(maskCanvas, 0, 0);
 
-  const fullCutoutCanvas = document.createElement("canvas");
-  fullCutoutCanvas.width = photoCanvas.width;
-  fullCutoutCanvas.height = photoCanvas.height;
-  const fullCutoutCtx = fullCutoutCanvas.getContext("2d");
-  if (!fullCutoutCtx) throw new Error("Canvas 2D context unavailable");
-  fullCutoutCtx.drawImage(photoCanvas, 0, 0);
-  fullCutoutCtx.globalCompositeOperation = "destination-in";
-  fullCutoutCtx.drawImage(blurredMaskCanvas, 0, 0);
-  fullCutoutCtx.globalCompositeOperation = "source-over";
-
-  // Crop down to just the person (plus a little breathing room), so
-  // compositing scales *them* to fill the output frame instead of the whole
-  // mostly-transparent source photo.
-  const pad = Math.round(0.05 * bboxSize);
-  const cropX = Math.max(0, minX - pad);
-  const cropY = Math.max(0, minY - pad);
-  const cropW = Math.min(segmentation.width, maxX + pad) - cropX;
-  const cropH = Math.min(segmentation.height, maxY + pad) - cropY;
-
   const cutoutCanvas = document.createElement("canvas");
-  cutoutCanvas.width = cropW;
-  cutoutCanvas.height = cropH;
+  cutoutCanvas.width = guestCanvas.width;
+  cutoutCanvas.height = guestCanvas.height;
   const cutoutCtx = cutoutCanvas.getContext("2d");
   if (!cutoutCtx) throw new Error("Canvas 2D context unavailable");
-  cutoutCtx.imageSmoothingEnabled = true;
-  cutoutCtx.imageSmoothingQuality = "high";
-  cutoutCtx.drawImage(fullCutoutCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+  cutoutCtx.drawImage(guestCanvas, 0, 0);
+  cutoutCtx.globalCompositeOperation = "destination-in";
+  cutoutCtx.drawImage(blurredMaskCanvas, 0, 0);
+  cutoutCtx.globalCompositeOperation = "source-over";
 
   return cutoutCanvas;
 }
 
-/** The source crop window `drawCover` below reads from `img` — covering a `w`x`h` canvas, like CSS `object-fit: cover`. */
-function coverCropWindow(img: HTMLImageElement, w: number, h: number) {
-  const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+/** Draws `src` (an image or canvas) onto a `w`x`h` canvas context, covering it (crop-to-fill, like CSS `object-fit: cover`). */
+function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, srcW: number, srcH: number, w: number, h: number) {
+  const scale = Math.max(w / srcW, h / srcH);
   const sw = w / scale;
   const sh = h / scale;
-  const sx = (img.naturalWidth - sw) / 2;
-  const sy = (img.naturalHeight - sh) / 2;
-  return { sx, sy, sw, sh };
-}
-
-/** Draws `img` onto a `w`x`h` canvas context, covering it (crop-to-fill, like CSS `object-fit: cover`). */
-function drawCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, w: number, h: number) {
-  const { sx, sy, sw, sh } = coverCropWindow(img, w, h);
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
-}
-
-/**
- * Maps a point given as a fraction (0-1) of the *original* scene image into
- * pixel coordinates on the `w`x`h` output canvas, accounting for the crop
- * `drawCover` applied to fit the image's aspect ratio to the output's.
- */
-function mapImageFractionToOutput(
-  fracX: number,
-  fracY: number,
-  img: HTMLImageElement,
-  crop: { sx: number; sy: number; sw: number; sh: number },
-  w: number,
-  h: number,
-) {
-  const origX = fracX * img.naturalWidth;
-  const origY = fracY * img.naturalHeight;
-  return { x: ((origX - crop.sx) / crop.sw) * w, y: ((origY - crop.sy) / crop.sh) * h };
+  const sx = (srcW - sw) / 2;
+  const sy = (srcH - sh) / 2;
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
 }
 
 const OUTPUT_WIDTH = 1200;
 const OUTPUT_HEIGHT = 900;
 
-export interface SceneSubjectSlot {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
+export interface SceneFaceLandmarks {
+  leftEye: Point;
+  rightEye: Point;
+  nose: Point;
 }
 
 /**
- * The whole offline pipeline: segment the guest out of their captured photo
- * and composite them onto the chosen scene's background image. Returns a
- * JPEG data URL — never touches the network.
+ * The whole offline pipeline: detect the guest's face in their captured
+ * photo, align and paste it over the face of the person already in the
+ * chosen scene photo (everything else about that person — body, pose, the
+ * dog, the boat — stays as shot). Returns a JPEG data URL — never touches
+ * the network.
  *
- * `subjectSlot`, when given, is where the *original* person already stands
- * in the background photo (see SCENE_SUBJECT_SLOTS in lib/scenes.ts) — the
- * guest's cutout is scaled and positioned to cover that region instead of a
- * generic bottom-center placement, so they read as replacing that person
- * rather than floating in front of them.
+ * `sceneFaceLandmarks` is where that scene's own person's eyes and nose
+ * are, as fractions (0-1) of the scene image (see SCENE_FACE_LANDMARKS in
+ * lib/scenes.ts) — measured once, not at runtime.
  */
 export async function generateOfflinePhoto(
   photoBase64: string,
   sceneImageUrl: string,
-  subjectSlot?: SceneSubjectSlot,
+  sceneFaceLandmarks: SceneFaceLandmarks,
 ): Promise<string> {
-  const [cutout, sceneImg] = await Promise.all([cutoutPerson(photoBase64), loadImage(sceneImageUrl)]);
+  const [guestImg, sceneImg] = await Promise.all([loadImage(photoBase64), loadImage(sceneImageUrl)]);
+
+  const guestCanvas = document.createElement("canvas");
+  guestCanvas.width = guestImg.naturalWidth;
+  guestCanvas.height = guestImg.naturalHeight;
+  const guestCtx = guestCanvas.getContext("2d");
+  if (!guestCtx) throw new Error("Canvas 2D context unavailable");
+  guestCtx.drawImage(guestImg, 0, 0);
+
+  const guestFace = await detectFace(guestCanvas);
+  const faceCutout = cutoutFace(guestCanvas, guestFace);
+
+  const sceneW = sceneImg.naturalWidth;
+  const sceneH = sceneImg.naturalHeight;
+  const sceneFace: FacePoints = {
+    leftEye: [sceneFaceLandmarks.leftEye[0] * sceneW, sceneFaceLandmarks.leftEye[1] * sceneH],
+    rightEye: [sceneFaceLandmarks.rightEye[0] * sceneW, sceneFaceLandmarks.rightEye[1] * sceneH],
+    nose: [sceneFaceLandmarks.nose[0] * sceneW, sceneFaceLandmarks.nose[1] * sceneH],
+  };
+
+  const matrix = solveSimilarity(
+    [guestFace.rightEye, guestFace.leftEye],
+    [sceneFace.rightEye, sceneFace.leftEye],
+  );
+
+  // Composite in the scene's own native resolution first — warping the
+  // guest's face into that coordinate space — then cover-fit the whole
+  // result to the output size in one pass at the end.
+  const composedCanvas = document.createElement("canvas");
+  composedCanvas.width = sceneW;
+  composedCanvas.height = sceneH;
+  const composedCtx = composedCanvas.getContext("2d");
+  if (!composedCtx) throw new Error("Canvas 2D context unavailable");
+  composedCtx.drawImage(sceneImg, 0, 0, sceneW, sceneH);
+  composedCtx.imageSmoothingEnabled = true;
+  composedCtx.imageSmoothingQuality = "high";
+  composedCtx.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]);
+  composedCtx.drawImage(faceCutout, 0, 0);
+  composedCtx.setTransform(1, 0, 0, 1, 0, 0);
 
   const out = document.createElement("canvas");
   out.width = OUTPUT_WIDTH;
   out.height = OUTPUT_HEIGHT;
-  const ctx = out.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context unavailable");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  const crop = coverCropWindow(sceneImg, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-  drawCover(ctx, sceneImg, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-
-  if (subjectSlot) {
-    const topLeft = mapImageFractionToOutput(subjectSlot.left, subjectSlot.top, sceneImg, crop, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-    const bottomRight = mapImageFractionToOutput(subjectSlot.right, subjectSlot.bottom, sceneImg, crop, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-    const slotCenterX = (topLeft.x + bottomRight.x) / 2;
-    const slotBottom = bottomRight.y;
-    const slotHeight = bottomRight.y - topLeft.y;
-
-    // Overscan the original subject's box a bit — the guest's own
-    // proportions won't match the original person's exactly, and this is
-    // meant to fully cover them, not just match their bounding box.
-    const OVERSCAN = 1.3;
-    const MAX_UPSCALE = 2.2;
-    const personScale = Math.min(MAX_UPSCALE, (slotHeight * OVERSCAN) / cutout.height);
-    const drawW = cutout.width * personScale;
-    const drawH = cutout.height * personScale;
-    const drawX = slotCenterX - drawW / 2;
-    const drawY = slotBottom - drawH;
-    ctx.drawImage(cutout, drawX, drawY, drawW, drawH);
-
-    return out.toDataURL("image/jpeg", 0.92);
-  }
-
-  // No known subject slot for this scene (e.g. a distant group shot) —
-  // place the cutout filling most of the frame height, bottom-anchored and
-  // centered — reads like they're standing in the scene rather than pasted
-  // in a corner. Capped so a low-resolution capture doesn't get blown up
-  // into a visibly soft, blurry cutout — better to show them a bit smaller
-  // than to upscale a small crop past where it still looks sharp.
-  const MAX_UPSCALE = 2.2;
-  const personScale = Math.min(MAX_UPSCALE, (OUTPUT_HEIGHT * 0.92) / cutout.height);
-  const drawW = cutout.width * personScale;
-  const drawH = cutout.height * personScale;
-  const drawX = (OUTPUT_WIDTH - drawW) / 2;
-  const drawY = OUTPUT_HEIGHT - drawH;
-  ctx.drawImage(cutout, drawX, drawY, drawW, drawH);
+  const outCtx = out.getContext("2d");
+  if (!outCtx) throw new Error("Canvas 2D context unavailable");
+  outCtx.imageSmoothingEnabled = true;
+  outCtx.imageSmoothingQuality = "high";
+  drawCover(outCtx, composedCanvas, sceneW, sceneH, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 
   return out.toDataURL("image/jpeg", 0.92);
 }

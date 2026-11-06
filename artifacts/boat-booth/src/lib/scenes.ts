@@ -16,24 +16,23 @@ export const SCENE_IMAGES: Record<string, string> = {
 };
 
 /**
- * Where the *original* person already stands in each background photo, as
- * fractions of the image (0-1, left/top/right/bottom). The offline
- * compositor scales and positions the guest's cutout to cover this exact
- * region instead of a generic bottom-center placement, so the guest reads
- * as replacing that person rather than floating in front of them.
+ * Where the *original* person's eyes and nose already are in each
+ * background photo, as fractions (0-1) of the image. The offline
+ * compositor aligns the guest's detected face to these three points (a
+ * 3-point affine warp) and pastes it over that person's face — everything
+ * else about them (body, pose, the dog, the boat) stays as shot.
  *
- * Measured once (not at runtime) by running the same BodyPix segmentation
- * used for guest photos against each scene's background image, taking the
- * largest single connected blob of "person" pixels (not just the bounding
- * box of every pixel classified as "person") — a scene with more than one
- * person in frame would otherwise average into a box that doesn't tightly
- * match either one. Omit a scene here to fall back to generic bottom-center
- * placement.
+ * Measured once (not at runtime) by running the same BlazeFace detection
+ * used on guest photos against each scene's background image — except
+ * "bass-fishing" and "boat-cruising", where BlazeFace couldn't find the
+ * face at all (too small in frame, and sunglasses respectively) even at a
+ * near-zero confidence threshold, so those two are plotted by hand instead,
+ * verified by drawing the points back onto the photo.
  */
-export const SCENE_SUBJECT_SLOTS: Record<string, { left: number; top: number; right: number; bottom: number }> = {
-  "bass-fishing": { left: 0.4785, top: 0.2165, right: 0.5918, bottom: 0.5957 },
-  "boat-cruising": { left: 0.2288, top: 0.3113, right: 0.5212, bottom: 0.9975 },
-  "trophy-catch": { left: 0.2533, top: 0.1854, right: 0.7239, bottom: 0.9341 },
-  "lake-camp": { left: 0.5029, top: 0.3031, right: 0.6904, bottom: 0.8878 },
-  "dock-unwind": { left: 0.3514, top: 0.1815, right: 0.6486, bottom: 0.988 },
+export const SCENE_FACE_LANDMARKS: Record<string, { leftEye: [number, number]; rightEye: [number, number]; nose: [number, number] }> = {
+  "bass-fishing": { leftEye: [0.5375, 0.2715], rightEye: [0.5225, 0.2755], nose: [0.53, 0.2889] },
+  "boat-cruising": { leftEye: [0.385, 0.4196], rightEye: [0.335, 0.4196], nose: [0.36, 0.4306] },
+  "trophy-catch": { leftEye: [0.5347, 0.3183], rightEye: [0.4731, 0.3191], nose: [0.5112, 0.3534] },
+  "lake-camp": { leftEye: [0.6151, 0.3358], rightEye: [0.57, 0.3489], nose: [0.5839, 0.3788] },
+  "dock-unwind": { leftEye: [0.5377, 0.2392], rightEye: [0.4966, 0.2418], nose: [0.5204, 0.2708] },
 };

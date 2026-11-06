@@ -10,7 +10,7 @@
 // unlike the earlier xAI-backed version.
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 import { generateOfflinePhoto } from "@/lib/offline-compositor";
-import { SCENE_IMAGES, SCENE_SUBJECT_SLOTS } from "@/lib/scenes";
+import { SCENE_IMAGES, SCENE_FACE_LANDMARKS } from "@/lib/scenes";
 
 export interface Scene {
   id: string;
@@ -115,16 +115,18 @@ export function useCreateGeneration() {
         queryClientNotify(queryClient, getGetBoothStatsQueryKey());
       };
 
-      // Offline, client-side only: segment the guest out of their photo and
-      // composite them onto the scene's background image (offline-compositor.ts).
-      // No network request — fire and forget here, useGetGeneration's polling
-      // picks up the result. downloadUrl is left unset; the result screen
-      // falls back to downloading photoUrl (a data: URL) directly.
+      // Offline, client-side only: detect the guest's face in their photo and
+      // paste it over the face of the person already in the scene's
+      // background image (offline-compositor.ts). No network request — fire
+      // and forget here, useGetGeneration's polling picks up the result.
+      // downloadUrl is left unset; the result screen falls back to
+      // downloading photoUrl (a data: URL) directly.
       (async () => {
         try {
           const sceneImageUrl = SCENE_IMAGES[data.sceneId];
-          if (!sceneImageUrl) throw new Error(`Unknown scene "${data.sceneId}".`);
-          const photoUrl = await generateOfflinePhoto(data.photoBase64, sceneImageUrl, SCENE_SUBJECT_SLOTS[data.sceneId]);
+          const sceneFaceLandmarks = SCENE_FACE_LANDMARKS[data.sceneId];
+          if (!sceneImageUrl || !sceneFaceLandmarks) throw new Error(`Unknown scene "${data.sceneId}".`);
+          const photoUrl = await generateOfflinePhoto(data.photoBase64, sceneImageUrl, sceneFaceLandmarks);
 
           const g = generations.get(id);
           if (!g) return;
