@@ -13,7 +13,9 @@
     "moduleResolution": "bundler",
     "types": ["node", "vite/client"],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@assets/*": ["../../attached_assets/*"],
+      "@workspace/api-client-react": ["./src/stub-api-client.tsx"]
     }
   }
 }

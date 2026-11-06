@@ -308,15 +308,29 @@ export default function Create() {
                         </p>
                       </div>
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => generation.photoUrl && downloadFile(generation.photoUrl, "boat-booth-photo")}
-                      className="bb-press inline-flex items-center gap-2 rounded-full font-extrabold"
-                      style={{ padding: "16px 28px", background: "#FFFFFF", color: "#061A2E", fontSize: 17, border: "3px solid #061A2E", boxShadow: "5px 5px 0 #061A2E" }}
+                  ) : generation.uploadStatus === "uploading" ? (
+                    <div
+                      className="flex items-center gap-3 rounded-[28px] bg-white bb-mono"
+                      style={{ padding: 20, border: "3px solid #061A2E", fontSize: 14, color: "#3A5670" }}
                     >
-                      <Download className="w-5 h-5" /> download photo
-                    </button>
-                  )}
+                      <QrCode className="w-5 h-5" style={{ color: "#FF6B4A" }} /> preparing your QR code&hellip;
+                    </div>
+                  ) : generation.uploadStatus === "failed" ? (
+                    <div
+                      className="flex items-center gap-3 rounded-[28px] bg-white bb-mono max-w-[320px]"
+                      style={{ padding: 20, border: "3px solid #061A2E", fontSize: 13, color: "#3A5670" }}
+                    >
+                      <QrCode className="w-5 h-5 shrink-0" style={{ color: "#FF6B4A" }} />
+                      QR code unavailable right now (needs an internet connection and the photo upload service). Use the download button instead.
+                    </div>
+                  ) : null}
+                  <button
+                    onClick={() => generation.photoUrl && downloadFile(generation.photoUrl, "boat-booth-photo")}
+                    className="bb-press inline-flex items-center gap-2 rounded-full font-extrabold"
+                    style={{ padding: "16px 28px", background: "#FFFFFF", color: "#061A2E", fontSize: 17, border: "3px solid #061A2E", boxShadow: "5px 5px 0 #061A2E" }}
+                  >
+                    <Download className="w-5 h-5" /> download photo
+                  </button>
                   <button onClick={reset} className="bb-mono self-center" style={{ fontSize: 14, color: "#061A2E", background: "none", border: "none" }}>
                     i&apos;m done, next guest &#8594;
                   </button>
@@ -342,8 +356,9 @@ function PhotoQrCode({ url }: { url: string }) {
     let cancelled = false;
     setQrDataUrl(null);
     QRCode.toDataURL(url, {
-      width: 220,
-      margin: 1,
+      width: 480,
+      margin: 4, // full quiet zone — phone cameras fail to lock on without it
+      errorCorrectionLevel: "L", // long Blob URLs: fewer, larger modules scan more reliably
       color: { dark: "#061A2E", light: "#ffffff" },
     })
       .then((dataUrl) => {
@@ -356,10 +371,10 @@ function PhotoQrCode({ url }: { url: string }) {
   }, [url]);
 
   if (!qrDataUrl) {
-    return <div className="w-[140px] h-[140px] rounded-2xl animate-pulse" style={{ background: "#F2FBFF", border: "2px solid #061A2E" }} />;
+    return <div className="w-[200px] h-[200px] rounded-2xl animate-pulse" style={{ background: "#F2FBFF", border: "2px solid #061A2E" }} />;
   }
 
-  return <img src={qrDataUrl} alt="Scan to download your photo" className="w-[140px] h-[140px] rounded-2xl" style={{ border: "2px solid #061A2E" }} />;
+  return <img src={qrDataUrl} alt="Scan to download your photo" className="w-[200px] h-[200px]" style={{ background: "#ffffff", imageRendering: "pixelated" }} />;
 }
 
 // Subcomponent for Webcam

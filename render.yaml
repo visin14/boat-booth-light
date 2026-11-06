@@ -1,0 +1,10 @@
+services:
+  - type: web
+    runtime: node
+    name: boat-booth
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/boat-booth run build
+    startCommand: node artifacts/boat-booth/server/index.mjs
+    envVars:
+      - key: NODE_VERSION
+        value: 22

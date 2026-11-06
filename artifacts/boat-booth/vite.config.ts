@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
+import { handlePhotoRequest } from "./server/photos.mjs";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 export default defineConfig(async ({ command }) => {
@@ -32,6 +33,16 @@ export default defineConfig(async ({ command }) => {
   return {
     base: basePath || "/",
     plugins: [
+      {
+        // Photo hand-off API for the QR-code download feature (dev + preview).
+        name: "booth-photo-api",
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => (handlePhotoRequest(req, res) ? undefined : next()));
+        },
+        configurePreviewServer(server) {
+          server.middlewares.use((req, res, next) => (handlePhotoRequest(req, res) ? undefined : next()));
+        },
+      },
       react(),
       tailwindcss(),
       runtimeErrorOverlay(),

@@ -29,6 +29,8 @@ export interface Generation {
   photoUrl: string | null;
   /** Short, scannable URL a phone can fetch the full-res photo from. */
   downloadUrl?: string;
+  /** State of the cloud upload that produces downloadUrl. */
+  uploadStatus?: "uploading" | "done" | "failed";
   error?: string;
 }
 
@@ -70,6 +72,21 @@ let nextId = 1;
 
 function queryClientNotify(queryClient: ReturnType<typeof useQueryClient>, key: unknown[]) {
   queryClient.invalidateQueries({ queryKey: key });
+}
+
+// Uploads the finished JPEG to /api/upload (Vercel Blob) and returns the
+// public download URL. Throws if the backend is unavailable (offline, local dev).
+async function uploadPhoto(photoUrl: string): Promise<string> {
+  const blob = await (await fetch(photoUrl)).blob();
+  const res = await fetch("/api/upload", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: blob,
+  });
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  const { url } = (await res.json()) as { url?: string };
+  if (!url) throw new Error("Upload returned no URL");
+  return url;
 }
 
 export function getGetGenerationQueryKey(id: string) {
@@ -115,12 +132,17 @@ export function useCreateGeneration() {
         queryClientNotify(queryClient, getGetBoothStatsQueryKey());
       };
 
-      // Offline, client-side only: detect the guest's face in their photo and
-      // paste it over the face of the person already in the scene's
-      // background image (offline-compositor.ts). No network request — fire
-      // and forget here, useGetGeneration's polling picks up the result.
-      // downloadUrl is left unset; the result screen falls back to
-      // downloading photoUrl (a data: URL) directly.
+      // Generation itself is offline, client-side only: detect the guest's
+      // face in their photo and paste it over the face of the person
+      // already in the scene's background image (offline-compositor.ts) —
+      // no network request, fire and forget here, useGetGeneration's
+      // polling picks up the result. The photo is then optionally uploaded
+      // (/api/upload) purely so the result screen can show a QR code for
+      // phones to scan; that upload needs a reachable backend/internet and
+      // is allowed to fail silently (uploadStatus: "failed") — the booth
+      // itself, and photoStatus, never depend on it. Without it, the result
+      // screen's "Download Photo" button falls back to downloading photoUrl
+      // (a data: URL) directly from the browser.
       (async () => {
         try {
           const sceneImageUrl = SCENE_IMAGES[data.sceneId];
@@ -130,7 +152,19 @@ export function useCreateGeneration() {
 
           const g = generations.get(id);
           if (!g) return;
-          generations.set(id, { ...g, photoStatus: "ready", photoUrl });
+          generations.set(id, { ...g, photoStatus: "ready", photoUrl, uploadStatus: "uploading" });
+          notify();
+          uploadPhoto(photoUrl)
+            .then((downloadUrl) => {
+              const cur = generations.get(id);
+              if (cur) generations.set(id, { ...cur, downloadUrl, uploadStatus: "done" });
+            })
+            .catch((e) => {
+              console.warn("Photo upload failed; QR download unavailable.", e);
+              const cur = generations.get(id);
+              if (cur) generations.set(id, { ...cur, uploadStatus: "failed" });
+            })
+            .finally(notify);
         } catch (err) {
           const g = generations.get(id);
           if (!g) return;
