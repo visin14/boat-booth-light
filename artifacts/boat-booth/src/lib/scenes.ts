@@ -33,9 +33,9 @@ export const SCENE_IMAGES: Record<string, string> = {
  * back onto the photo.
  */
 export const SCENE_FACE_LANDMARKS: Record<string, { leftEye: [number, number]; rightEye: [number, number]; nose: [number, number] }> = {
-  "bass-fishing": { leftEye: [0.5375, 0.2715], rightEye: [0.5225, 0.2755], nose: [0.53, 0.2889] },
-  "boat-cruising": { leftEye: [0.385, 0.4196], rightEye: [0.335, 0.4196], nose: [0.36, 0.4306] },
-  "trophy-catch": { leftEye: [0.683, 0.235], rightEye: [0.658, 0.244], nose: [0.67, 0.262] },
+  "bass-fishing": { leftEye: [0.5469, 0.2594], rightEye: [0.5127, 0.2683], nose: [0.5303, 0.2953] },
+  "boat-cruising": { leftEye: [0.4003, 0.3922], rightEye: [0.3431, 0.4044], nose: [0.3725, 0.4363] },
+  "trophy-catch": { leftEye: [0.6992, 0.2435], rightEye: [0.6703, 0.2507], nose: [0.6836, 0.2794] },
   "lake-camp": { leftEye: [0.6151, 0.3358], rightEye: [0.57, 0.3489], nose: [0.5839, 0.3788] },
   "dock-unwind": { leftEye: [0.5377, 0.2392], rightEye: [0.4966, 0.2418], nose: [0.5204, 0.2708] },
 };
