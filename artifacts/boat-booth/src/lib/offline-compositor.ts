@@ -162,11 +162,17 @@ function cutoutFace(guestCanvas: HTMLCanvasElement, face: DetectedFace): HTMLCan
   const boxH = by1 - by0;
   const centerX = (bx0 + bx1) / 2;
   // BlazeFace's box is tight around eyes/nose/mouth — bias the oval's
-  // center up and extend it further below to reach the chin, and well
-  // above to reach the forehead/hairline.
-  const centerY = by0 + boxH * 0.45;
-  const radiusX = boxW * 0.75;
-  const radiusY = boxH * 1.0;
+  // center up and extend it to reach the chin below and the
+  // forehead/hair above. Sized generously enough to reliably clear the
+  // hairline even on a guest with more hair volume — too tight and a gap
+  // opens up at the top where *their own* background shows through inside
+  // the oval instead (a differently-colored patch, just as visible as the
+  // halo it was meant to avoid). The soft, wide feather below is what
+  // actually keeps a bit of background-color leak at the true edge from
+  // reading as a hard ring, not a tight radius.
+  const centerY = by0 + boxH * 0.4;
+  const radiusX = boxW * 0.7;
+  const radiusY = boxH * 0.95;
 
   const maskCanvas = document.createElement("canvas");
   maskCanvas.width = guestCanvas.width;
@@ -180,8 +186,12 @@ function cutoutFace(guestCanvas: HTMLCanvasElement, face: DetectedFace): HTMLCan
 
   // Feather the oval edge so the paste doesn't look like a sticker — blur
   // radius scales with the face size so it reads the same whether the
-  // capture was low- or high-resolution.
-  const featherPx = Math.max(2, Math.round(Math.min(radiusX, radiusY) * 0.12));
+  // capture was low- or high-resolution. Wide on purpose: a simple oval
+  // can't match an actual head's silhouette exactly, so *some* of the
+  // guest's own background inevitably ends up right at the true edge —
+  // a wide, soft gradient there fades that out gradually instead of
+  // showing it as a sharp, differently-colored ring.
+  const featherPx = Math.max(3, Math.round(Math.min(radiusX, radiusY) * 0.22));
   const blurredMaskCanvas = document.createElement("canvas");
   blurredMaskCanvas.width = maskCanvas.width;
   blurredMaskCanvas.height = maskCanvas.height;
