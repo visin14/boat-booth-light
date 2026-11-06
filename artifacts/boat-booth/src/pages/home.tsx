@@ -56,7 +56,7 @@ const EXPERIENCES = [
   {
     id: "trophy-catch",
     name: "trophy catch",
-    tagline: "hold up your trophy catch.",
+    tagline: "the one that didn't get away.",
     tag: "the big one",
     tagBg: "var(--bb-lime)",
     shadow: "#8B5CFF",

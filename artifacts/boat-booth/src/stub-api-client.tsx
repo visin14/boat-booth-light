@@ -48,8 +48,8 @@ const SCENES: Scene[] = [
   {
     id: "trophy-catch",
     name: "Trophy Catch",
-    tagline: "Hold up your trophy catch",
-    description: "Show off the big one you just reeled in.",
+    tagline: "Reel in the one that didn't get away",
+    description: "Fight the big one right up to the boat.",
   },
   {
     id: "lake-camp",
