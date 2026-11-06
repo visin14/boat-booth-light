@@ -197,14 +197,16 @@ async function cutoutFace(guestCanvas: HTMLCanvasElement, face: DetectedFace): P
   const centerX = (bx0 + bx1) / 2;
   const centerY = by0 + boxH * 0.4;
 
-  // Generous region of interest around the head — wide/tall enough to
-  // reliably include hair and ears (and a little neck below the chin),
-  // but not reaching down into the rest of the body, so a raised hand or
-  // the far shoulder elsewhere in frame can't get pulled in too.
-  const roiX0 = Math.max(0, Math.floor(centerX - boxW * 1.3));
-  const roiX1 = Math.min(guestCanvas.width, Math.ceil(centerX + boxW * 1.3));
+  // Region of interest around the head — wide/tall enough to reliably
+  // include hair and ears, but stopping at the jaw/chin rather than
+  // reaching down into the neck, collar and shoulders: those are the
+  // guest's own clothing, which otherwise gets pasted on top of whatever
+  // the scene's own person is wearing there and shows up as a mismatched
+  // collar/color underneath the face.
+  const roiX0 = Math.max(0, Math.floor(centerX - boxW * 1.2));
+  const roiX1 = Math.min(guestCanvas.width, Math.ceil(centerX + boxW * 1.2));
   const roiY0 = Math.max(0, Math.floor(by0 - boxH * 0.9));
-  const roiY1 = Math.min(guestCanvas.height, Math.ceil(by0 + boxH * 1.7));
+  const roiY1 = Math.min(guestCanvas.height, Math.ceil(by0 + boxH * 1.05));
 
   // The WebGL backend is occasionally flaky across repeated inferences in
   // one long-lived session (see the retry note on detectFace above) —
@@ -283,6 +285,59 @@ function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, srcW: 
   ctx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
 }
 
+/** Average RGB over a rectangular region of `canvas`, in its own pixel coordinates. */
+function averageColor(canvas: HTMLCanvasElement, x0: number, y0: number, x1: number, y1: number): [number, number, number] {
+  const cx0 = Math.max(0, Math.floor(x0));
+  const cy0 = Math.max(0, Math.floor(y0));
+  const cx1 = Math.min(canvas.width, Math.ceil(x1));
+  const cy1 = Math.min(canvas.height, Math.ceil(y1));
+  const ctx = canvas.getContext("2d");
+  if (!ctx || cx1 <= cx0 || cy1 <= cy0) return [128, 128, 128];
+  const { data } = ctx.getImageData(cx0, cy0, cx1 - cx0, cy1 - cy0);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  // Sample every 3rd pixel in each dimension — plenty for an average, and
+  // much cheaper than reading every pixel of a high-res photo.
+  const step = 3;
+  for (let i = 0; i < data.length; i += 4 * step) {
+    r += data[i];
+    g += data[i + 1];
+    b += data[i + 2];
+    count++;
+  }
+  if (count === 0) return [128, 128, 128];
+  return [r / count, g / count, b / count];
+}
+
+/**
+ * Nudges `canvas`'s RGB (in place, alpha untouched) toward `targetColor`,
+ * blended at `strength` (0 = no change, 1 = fully matched) — a cheap
+ * per-channel gain correction, not real color science, but enough to stop
+ * a face lit indoors from reading as obviously pasted onto a golden-hour
+ * lake photo. Only non-transparent pixels are touched.
+ */
+function nudgeColorToward(canvas: HTMLCanvasElement, sourceColor: [number, number, number], targetColor: [number, number, number], strength: number) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const gain: [number, number, number] = [0, 1, 2].map((i) => {
+    const raw = targetColor[i] / Math.max(1, sourceColor[i]);
+    const clamped = Math.min(1.5, Math.max(0.7, raw));
+    return 1 + (clamped - 1) * strength;
+  }) as [number, number, number];
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const { data } = imageData;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    data[i] = Math.min(255, data[i] * gain[0]);
+    data[i + 1] = Math.min(255, data[i + 1] * gain[1]);
+    data[i + 2] = Math.min(255, data[i + 2] * gain[2]);
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
 const OUTPUT_WIDTH = 1200;
 const OUTPUT_HEIGHT = 900;
 
@@ -342,6 +397,30 @@ export async function generateOfflinePhoto(
   const composedCtx = composedCanvas.getContext("2d");
   if (!composedCtx) throw new Error("Canvas 2D context unavailable");
   composedCtx.drawImage(sceneImg, 0, 0, sceneW, sceneH);
+
+  // Nudge the cutout's color toward the scene's own lighting at the exact
+  // spot the face is about to land, before pasting it — otherwise a face
+  // lit by indoor light (or a different time of day) stands out against a
+  // golden-hour lake no matter how clean the cutout's edges are. Sampled
+  // from the composed canvas's background *before* the face is drawn, so
+  // this reads the scene's ambient color, not anything already pasted.
+  const [fx0, fy0] = guestFace.topLeft;
+  const [fx1, fy1] = guestFace.bottomRight;
+  const destCorners: Point[] = [
+    [fx0, fy0],
+    [fx1, fy0],
+    [fx0, fy1],
+    [fx1, fy1],
+  ].map(([x, y]) => [matrix[0] * x + matrix[2] * y + matrix[4], matrix[1] * x + matrix[3] * y + matrix[5]]);
+  const destXs = destCorners.map((p) => p[0]);
+  const destYs = destCorners.map((p) => p[1]);
+  const targetColor = averageColor(composedCanvas, Math.min(...destXs), Math.min(...destYs), Math.max(...destXs), Math.max(...destYs));
+  const sourceColor = averageColor(guestCanvas, fx0, fy0, fx1, fy1);
+  // Blended at 55% strength — enough to visibly tie the face into the
+  // scene's warmth/brightness without pushing skin tones somewhere wrong
+  // when the two photos' lighting is very different.
+  nudgeColorToward(faceCutout, sourceColor, targetColor, 0.55);
+
   composedCtx.imageSmoothingEnabled = true;
   composedCtx.imageSmoothingQuality = "high";
   composedCtx.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]);
