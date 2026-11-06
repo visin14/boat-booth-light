@@ -72,44 +72,69 @@ async function cutoutPerson(photoDataUrl: string): Promise<HTMLCanvasElement> {
   if (!photoCtx) throw new Error("Canvas 2D context unavailable");
   photoCtx.drawImage(img, 0, 0);
 
-  const segmentation = await net.segmentPerson(photoCanvas, {
-    // "full" gives a noticeably less blocky mask boundary than the default
-    // "medium" — this runs once per photo, not per frame, so the extra cost
-    // is a worthwhile trade for not looking pixelated once cropped and
-    // scaled up to fill the frame.
-    internalResolution: "full",
-    // Slightly below the 0.7 default so more of the body (not just skin
-    // tones) counts as "person" — clothing in low light was getting missed
-    // and the bounding box below ended up head-only.
-    segmentationThreshold: 0.6,
-  });
-
-  // Bounding box of the segmented person, in segmentation-mask pixel space
-  // (same resolution as the source photo). Needed below to crop the cutout
-  // down to just them — without this, compositing scales the *whole*
-  // mostly-transparent source frame to fill the output, leaving the person
-  // tiny and wherever they happened to stand in the original shot.
-  let minX = segmentation.width;
-  let minY = segmentation.height;
+  // The underlying WebGL backend is occasionally flaky across repeated
+  // inferences on different-sized inputs in one long-lived session — a
+  // kiosk processing many guests back to back is exactly that pattern —
+  // and can return a near-empty mask on an otherwise perfectly good photo.
+  // Retry once with a fresh inference before concluding the photo itself
+  // is the problem, so a guest doesn't get an unnecessary "retake" prompt
+  // over a transient hiccup.
+  const SEGMENT_ATTEMPTS = 2;
+  let minX = 0;
+  let minY = 0;
   let maxX = -1;
   let maxY = -1;
   let personPixels = 0;
-  for (let y = 0; y < segmentation.height; y++) {
-    for (let x = 0; x < segmentation.width; x++) {
-      if (segmentation.data[y * segmentation.width + x] !== 1) continue;
-      personPixels++;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+  let segmentation: Awaited<ReturnType<typeof net.segmentPerson>> | null = null;
+
+  for (let attempt = 1; attempt <= SEGMENT_ATTEMPTS; attempt++) {
+    segmentation = await net.segmentPerson(photoCanvas, {
+      // "full" gives a noticeably less blocky mask boundary than the default
+      // "medium" — this runs once per photo, not per frame, so the extra cost
+      // is a worthwhile trade for not looking pixelated once cropped and
+      // scaled up to fill the frame.
+      internalResolution: "full",
+      // Slightly below the 0.7 default so more of the body (not just skin
+      // tones) counts as "person" — clothing in low light was getting missed
+      // and the bounding box below ended up head-only.
+      segmentationThreshold: 0.6,
+    });
+
+    // Bounding box of the segmented person, in segmentation-mask pixel space
+    // (same resolution as the source photo). Needed below to crop the cutout
+    // down to just them — without this, compositing scales the *whole*
+    // mostly-transparent source frame to fill the output, leaving the person
+    // tiny and wherever they happened to stand in the original shot.
+    minX = segmentation.width;
+    minY = segmentation.height;
+    maxX = -1;
+    maxY = -1;
+    personPixels = 0;
+    for (let y = 0; y < segmentation.height; y++) {
+      for (let x = 0; x < segmentation.width; x++) {
+        if (segmentation.data[y * segmentation.width + x] !== 1) continue;
+        personPixels++;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
     }
+
+    const bboxHeightFrac = maxY >= minY ? (maxY - minY) / segmentation.height : 0;
+    const personAreaFrac = personPixels / (segmentation.width * segmentation.height);
+    const looksValid = maxX >= minX && maxY >= minY && bboxHeightFrac >= 0.25 && personAreaFrac >= 0.03;
+    if (looksValid || attempt === SEGMENT_ATTEMPTS) break;
   }
+  if (!segmentation) throw new Error("Segmentation model unavailable.");
+
   // A guest standing in front of the booth camera should dominate the
   // frame — a sliver of "person" pixels (a stray hand, a reflection, model
-  // noise) crops down to something unrecognizable once blown up to fill the
-  // result. Fail clearly here instead of silently compositing that, so the
-  // guest sees the existing "something went wrong, retake" screen rather
-  // than a broken-looking photo.
+  // noise, or a leftover flaky inference even after the retry above) crops
+  // down to something unrecognizable once blown up to fill the result. Fail
+  // clearly here instead of silently compositing that, so the guest sees
+  // the existing "something went wrong, retake" screen rather than a
+  // broken-looking photo.
   const bboxHeightFrac = maxY >= minY ? (maxY - minY) / segmentation.height : 0;
   const personAreaFrac = personPixels / (segmentation.width * segmentation.height);
   if (maxX < minX || maxY < minY || bboxHeightFrac < 0.25 || personAreaFrac < 0.03) {

@@ -14,11 +14,11 @@ import { SCENE_IMAGES } from "@/lib/scenes";
 import { preloadSegmenter } from "@/lib/offline-compositor";
 
 const SCENE_META: Record<string, { tag: string; tagBg: string; shadow: string }> = {
-  "pontoon-sunset": { tag: "most picked", tagBg: "var(--bb-lime)", shadow: "#FF6B4A" },
-  "wakesurfing": { tag: "high energy", tagBg: "#FFD23F", shadow: "#3FC6FF" },
   "bass-fishing": { tag: "chill mode", tagBg: "#FF7AD9", shadow: "var(--bb-lime)" },
   "boat-cruising": { tag: "smooth sailing", tagBg: "#8EDCFF", shadow: "#FF7AD9" },
   "trophy-catch": { tag: "the big one", tagBg: "var(--bb-lime)", shadow: "#8B5CFF" },
+  "lake-camp": { tag: "cozy vibes", tagBg: "#FFD23F", shadow: "#8B5CFF" },
+  "dock-unwind": { tag: "golden hour", tagBg: "#FF6B4A", shadow: "#FFD23F" },
 };
 const FALLBACK_META = { tag: "pick me", tagBg: "#FFD23F", shadow: "#3FC6FF" };
 

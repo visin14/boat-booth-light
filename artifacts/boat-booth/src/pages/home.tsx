@@ -16,7 +16,7 @@ const STEPS = [
     bg: "#8EDCFF",
     rotate: "-1.5deg",
     title: "pick a scene",
-    description: "Pontoon, wakesurfing, bass fishing and more. Choose your boat day.",
+    description: "Bass fishing, boat cruising, dockside camp and more. Choose your boat day.",
   },
   {
     num: "02",
@@ -35,24 +35,6 @@ const STEPS = [
 ];
 
 const EXPERIENCES = [
-  {
-    id: "pontoon-sunset",
-    name: "pontoon sunset",
-    tagline: "golden hour, zero effort.",
-    tag: "most picked",
-    tagBg: "var(--bb-lime)",
-    shadow: "#FF6B4A",
-    image: SCENE_IMAGES["pontoon-sunset"],
-  },
-  {
-    id: "wakesurfing",
-    name: "wakesurfing",
-    tagline: "carve the wake. look effortless.",
-    tag: "high energy",
-    tagBg: "#FFD23F",
-    shadow: "#3FC6FF",
-    image: SCENE_IMAGES["wakesurfing"],
-  },
   {
     id: "bass-fishing",
     name: "bass fishing",
@@ -79,6 +61,24 @@ const EXPERIENCES = [
     tagBg: "var(--bb-lime)",
     shadow: "#8B5CFF",
     image: SCENE_IMAGES["trophy-catch"],
+  },
+  {
+    id: "lake-camp",
+    name: "lake camp",
+    tagline: "dockside glamping, trophy in hand.",
+    tag: "cozy vibes",
+    tagBg: "#FFD23F",
+    shadow: "#8B5CFF",
+    image: SCENE_IMAGES["lake-camp"],
+  },
+  {
+    id: "dock-unwind",
+    name: "dock unwind",
+    tagline: "kick back, lake side.",
+    tag: "golden hour",
+    tagBg: "#FF6B4A",
+    shadow: "#FFD23F",
+    image: SCENE_IMAGES["dock-unwind"],
   },
 ];
 
@@ -224,7 +224,7 @@ function Waves() {
 }
 
 const MARQUEE_TEXT =
-  "pontoon sunset ✦ wakesurf mode ✦ bass fishing ✦ main character energy ✦ no boat required ✦ golden hour on demand ✦ ";
+  "bass fishing ✦ boat cruising ✦ dockside camp ✦ main character energy ✦ no boat required ✦ golden hour on demand ✦ ";
 
 export default function Home() {
   const brand = useBrand();

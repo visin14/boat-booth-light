@@ -34,18 +34,6 @@ export interface Generation {
 
 const SCENES: Scene[] = [
   {
-    id: "pontoon-sunset",
-    name: "Pontoon Sunset",
-    tagline: "Golden hour on the water",
-    description: "Relax on a pontoon as the sun dips below the horizon.",
-  },
-  {
-    id: "wakesurfing",
-    name: "Wakesurfing",
-    tagline: "Carve the wake",
-    description: "Ride the board behind the boat on a glassy lake.",
-  },
-  {
     id: "bass-fishing",
     name: "Bass Fishing",
     tagline: "Reel in the big one",
@@ -62,6 +50,18 @@ const SCENES: Scene[] = [
     name: "Trophy Catch",
     tagline: "Hold up your trophy catch",
     description: "Show off the big one you just reeled in.",
+  },
+  {
+    id: "lake-camp",
+    name: "Lake Camp",
+    tagline: "Dockside glamping with your trophy catch",
+    description: "Kneel under the tent flap with your catch and your dog at golden hour.",
+  },
+  {
+    id: "dock-unwind",
+    name: "Dock Unwind",
+    tagline: "Kick back, lake side",
+    description: "Settle into an Adirondack chair on the dock as the sun sets.",
   },
 ];
 
